@@ -1,6 +1,10 @@
 #pragma once
 #include <PowerRenameInterfaces.h>
+#include <settings.h>
 #include <shldisp.h>
+
+void ModuleAddRef();
+void ModuleRelease();
 
 class CPowerRenameListView
 {
@@ -34,16 +38,14 @@ class CPowerRenameUI :
     public IPowerRenameManagerEvents
 {
 public:
-    CPowerRenameUI() :
-        m_refCount(1)
-    {
-        (void)OleInitialize(nullptr);
-    }
+    CPowerRenameUI();
 
     // IUnknown
     IFACEMETHODIMP QueryInterface(__in REFIID riid, __deref_out void** ppv);
-    IFACEMETHODIMP_(ULONG) AddRef();
-    IFACEMETHODIMP_(ULONG) Release();
+    IFACEMETHODIMP_(ULONG)
+    AddRef();
+    IFACEMETHODIMP_(ULONG)
+    Release();
 
     // IPowerRenameUI
     IFACEMETHODIMP Show(_In_opt_ HWND hwndParent);
@@ -68,17 +70,35 @@ public:
     IFACEMETHODIMP DragLeave();
     IFACEMETHODIMP Drop(_In_ IDataObject* pdtobj, DWORD grfKeyState, POINTL pt, _Inout_ DWORD* pdwEffect);
 
-    static HRESULT s_CreateInstance(_In_ IPowerRenameManager* psrm, _In_opt_ IDataObject* pdo, _In_ bool enableDragDrop, _Outptr_ IPowerRenameUI** ppsrui);
+    static HRESULT s_CreateInstance(_In_ IPowerRenameManager* psrm, _In_opt_ IUnknown* dataSource, _In_ bool enableDragDrop, _Outptr_ IPowerRenameUI** ppsrui);
 
 private:
+    struct DialogItemsPositioning
+    {
+        int groupsWidthDiff;
+        int previewGroupHeightDiff;
+        int searchReplaceWidthDiff;
+        int listPreviewWidthDiff;
+        int listPreviewHeightDiff;
+        int statusMessageYDiff;
+        int renameButtonXDiff;
+        int renameButtonYDiff;
+        int helpButtonXDiff;
+        int helpButtonYDiff;
+        int cancelButtonXDiff;
+        int cancelButtonYDiff;
+    };
+
     ~CPowerRenameUI()
     {
         DeleteObject(m_iconMain);
         OleUninitialize();
+        ModuleRelease();
     }
 
     HRESULT _DoModal(__in_opt HWND hwnd);
     HRESULT _DoModeless(__in_opt HWND hwnd);
+    void BecomeForegroundWindow();
 
     static INT_PTR CALLBACK s_DlgProc(HWND hdlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
@@ -92,7 +112,7 @@ private:
         return pDlg ? pDlg->_DlgProc(uMsg, wParam, lParam) : FALSE;
     }
 
-    HRESULT _Initialize(_In_ IPowerRenameManager* psrm, _In_opt_ IDataObject* pdo, _In_ bool enableDragDrop);
+    HRESULT _Initialize(_In_ IPowerRenameManager* psrm, _In_opt_ IUnknown* dataSource, _In_ bool enableDragDrop);
     HRESULT _InitAutoComplete();
     void _Cleanup();
 
@@ -107,7 +127,7 @@ private:
     void _OnCloseDlg();
     void _OnDestroyDlg();
     void _OnSearchReplaceChanged();
-    void _MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags, _In_ int xDelta, _In_ int yDelta);
+    void _MoveControl(_In_ DWORD id, _In_ DWORD repositionFlags);
 
     HRESULT _ReadSettings();
     HRESULT _WriteSettings();
@@ -116,8 +136,10 @@ private:
     void _SetCheckboxesFromFlags(_In_ DWORD flags);
     void _ValidateFlagCheckbox(_In_ DWORD checkBoxId);
 
-    void _EnumerateItems(_In_ IDataObject* pdtobj);
+    void _EnumerateItems(_In_ IUnknown* pdtobj);
     void _UpdateCounts();
+
+    void _CollectItemPosition(_In_ DWORD id);
 
     long m_refCount = 0;
     bool m_initialized = false;
@@ -131,12 +153,14 @@ private:
     DWORD m_currentRegExId = 0;
     UINT m_selectedCount = 0;
     UINT m_renamingCount = 0;
+    UINT m_initialDPI = 0;
+    DialogItemsPositioning m_itemsPositioning {};
     int m_initialWidth = 0;
     int m_initialHeight = 0;
     int m_lastWidth = 0;
     int m_lastHeight = 0;
     CComPtr<IPowerRenameManager> m_spsrm;
-    CComPtr<IDataObject> m_spdo;
+    CComPtr<IUnknown> m_dataSource;
     CComPtr<IDropTargetHelper> m_spdth;
     CComPtr<IAutoComplete2> m_spSearchAC;
     CComPtr<IUnknown> m_spSearchACL;

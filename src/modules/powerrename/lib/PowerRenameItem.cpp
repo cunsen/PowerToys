@@ -1,6 +1,6 @@
-#include "stdafx.h"
+#include "pch.h"
 #include "PowerRenameItem.h"
-#include "helpers.h"
+#include "icon_helpers.h"
 
 int CPowerRenameItem::s_id = 0;
 
@@ -39,6 +39,36 @@ IFACEMETHODIMP CPowerRenameItem::get_path(_Outptr_ PWSTR* path)
     {
         hr = SHStrDup(m_path, path);
     }
+    return hr;
+}
+
+IFACEMETHODIMP CPowerRenameItem::get_date(_Outptr_ SYSTEMTIME* date)
+{
+    CSRWSharedAutoLock lock(&m_lock);
+    HRESULT hr = m_isDateParsed ? S_OK : E_FAIL ;
+    if (!m_isDateParsed)
+    {
+        HANDLE hFile = CreateFileW(m_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+        if (hFile != INVALID_HANDLE_VALUE)
+        {
+            FILETIME CreationTime;
+            if (GetFileTime(hFile, &CreationTime, NULL, NULL))
+            {
+                SYSTEMTIME SystemTime, LocalTime;
+                if (FileTimeToSystemTime(&CreationTime, &SystemTime))
+                {
+                    if (SystemTimeToTzSpecificLocalTime(NULL, &SystemTime, &LocalTime))
+                    {
+                        m_date = LocalTime;
+                        m_isDateParsed = true;
+                        hr = S_OK;
+                    }
+                }
+            }
+        }
+        CloseHandle(hFile);
+    }
+    *date = m_date;
     return hr;
 }
 
@@ -147,7 +177,7 @@ IFACEMETHODIMP CPowerRenameItem::ShouldRenameItem(_In_ DWORD flags, _Out_ bool* 
     bool excludeBecauseFolder = (m_isFolder && (flags & PowerRenameFlags::ExcludeFolders));
     bool excludeBecauseFile = (!m_isFolder && (flags & PowerRenameFlags::ExcludeFiles));
     bool excludeBecauseSubFolderContent = (m_depth > 0 && (flags & PowerRenameFlags::ExcludeSubfolders));
-    *shouldRename = (m_selected && hasChanged && !excludeBecauseFile &&
+    *shouldRename = (m_selected && m_canRename && hasChanged && !excludeBecauseFile &&
                      !excludeBecauseFolder && !excludeBecauseSubFolderContent);
 
     return S_OK;
@@ -207,12 +237,16 @@ HRESULT CPowerRenameItem::_Init(_In_ IShellItem* psi)
         if (SUCCEEDED(hr))
         {
             // Check if we are a folder now so we can check this attribute quickly later
+            // Also check if the shell allows us to rename the item.
             SFGAOF att = 0;
-            hr = psi->GetAttributes(SFGAO_STREAM | SFGAO_FOLDER, &att);
+            hr = psi->GetAttributes(SFGAO_STREAM | SFGAO_FOLDER | SFGAO_CANRENAME, &att);
             if (SUCCEEDED(hr))
             {
                 // Some items can be both folders and streams (ex: zip folders).
                 m_isFolder = (att & SFGAO_FOLDER) && !(att & SFGAO_STREAM);
+                // The shell lets us know if an item should not be renamed
+                // (ex: user profile director, windows dir, etc).
+                m_canRename = (att & SFGAO_CANRENAME);
             }
         }
     }

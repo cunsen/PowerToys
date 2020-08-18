@@ -1,5 +1,5 @@
 #pragma once
-#include "stdafx.h"
+#include "pch.h"
 
 enum PowerRenameFlags
 {
@@ -11,7 +11,10 @@ enum PowerRenameFlags
     ExcludeFolders = 0x20,
     ExcludeSubfolders = 0x40,
     NameOnly = 0x80,
-    ExtensionOnly = 0x100
+    ExtensionOnly = 0x100,
+    Uppercase = 0x200,
+    Lowercase = 0x400,
+    Titlecase = 0x800
 };
 
 interface __declspec(uuid("3ECBA62B-E0F0-4472-AA2E-DEE7A1AA46B9")) IPowerRenameRegExEvents : public IUnknown
@@ -40,6 +43,7 @@ interface __declspec(uuid("C7F59201-4DE1-4855-A3A2-26FC3279C8A5")) IPowerRenameI
 {
 public:
     IFACEMETHOD(get_path)(_Outptr_ PWSTR* path) = 0;
+    IFACEMETHOD(get_date)(_Outptr_ SYSTEMTIME* date) = 0;
     IFACEMETHOD(get_shellItem)(_Outptr_ IShellItem** ppsi) = 0;
     IFACEMETHOD(get_originalName)(_Outptr_ PWSTR* originalName) = 0;
     IFACEMETHOD(get_newName)(_Outptr_ PWSTR* newName) = 0;

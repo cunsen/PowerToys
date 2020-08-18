@@ -1,10 +1,12 @@
-#include "stdafx.h"
+#include "pch.h"
 #include "PowerRenameExt.h"
 #include <PowerRenameUI.h>
 #include <PowerRenameItem.h>
 #include <PowerRenameManager.h>
 #include <trace.h>
+#include <common.h>
 #include <Helpers.h>
+#include <icon_helpers.h>
 #include <Settings.h>
 #include "resource.h"
 
@@ -18,21 +20,22 @@ struct InvokeStruct
 
 CPowerRenameMenu::CPowerRenameMenu()
 {
-    DllAddRef();
+    ModuleAddRef();
+    app_name = GET_RESOURCE_STRING(IDS_POWERRENAME_APP_NAME);
 }
 
 CPowerRenameMenu::~CPowerRenameMenu()
 {
     m_spdo = nullptr;
     DeleteObject(m_hbmpIcon);
-    DllRelease();
+    ModuleRelease();
 }
 
-HRESULT CPowerRenameMenu::s_CreateInstance(_In_opt_ IUnknown*, _In_ REFIID riid, _Outptr_ void **ppv)
+HRESULT CPowerRenameMenu::s_CreateInstance(_In_opt_ IUnknown*, _In_ REFIID riid, _Outptr_ void** ppv)
 {
     *ppv = nullptr;
     HRESULT hr = E_OUTOFMEMORY;
-    CPowerRenameMenu *pprm = new CPowerRenameMenu();
+    CPowerRenameMenu* pprm = new CPowerRenameMenu();
     if (pprm)
     {
         hr = pprm->QueryInterface(riid, ppv);
@@ -42,10 +45,10 @@ HRESULT CPowerRenameMenu::s_CreateInstance(_In_opt_ IUnknown*, _In_ REFIID riid,
 }
 
 // IShellExtInit
-HRESULT CPowerRenameMenu::Initialize(_In_opt_ PCIDLIST_ABSOLUTE, _In_ IDataObject *pdtobj, HKEY)
+HRESULT CPowerRenameMenu::Initialize(_In_opt_ PCIDLIST_ABSOLUTE, _In_ IDataObject* pdtobj, HKEY)
 {
     // Check if we have disabled ourselves
-    if (!CSettings::GetEnabled())
+    if (!CSettingsInstance().GetEnabled())
         return E_FAIL;
 
     // Cache the data object to be used later
@@ -57,11 +60,15 @@ HRESULT CPowerRenameMenu::Initialize(_In_opt_ PCIDLIST_ABSOLUTE, _In_ IDataObjec
 HRESULT CPowerRenameMenu::QueryContextMenu(HMENU hMenu, UINT index, UINT uIDFirst, UINT, UINT uFlags)
 {
     // Check if we have disabled ourselves
-    if (!CSettings::GetEnabled())
+    if (!CSettingsInstance().GetEnabled())
         return E_FAIL;
 
     // Check if we should only be on the extended context menu
-    if (CSettings::GetExtendedContextMenuOnly() && (!(uFlags & CMF_EXTENDEDVERBS)))
+    if (CSettingsInstance().GetExtendedContextMenuOnly() && (!(uFlags & CMF_EXTENDEDVERBS)))
+        return E_FAIL;
+
+    // Check if at least one of the selected items is actually renamable.
+    if (!DataObjectContainsRenamableItem(m_spdo))
         return E_FAIL;
 
     HRESULT hr = E_UNEXPECTED;
@@ -78,7 +85,7 @@ HRESULT CPowerRenameMenu::QueryContextMenu(HMENU hMenu, UINT index, UINT uIDFirs
         mii.dwTypeData = (PWSTR)menuName;
         mii.fState = MFS_ENABLED;
 
-        if (CSettings::GetShowIconOnMenu())
+        if (CSettingsInstance().GetShowIconOnMenu())
         {
             HICON hIcon = (HICON)LoadImage(g_hInst, MAKEINTRESOURCE(IDI_RENAME), IMAGE_ICON, 16, 16, 0);
             if (hIcon)
@@ -110,12 +117,12 @@ HRESULT CPowerRenameMenu::InvokeCommand(_In_ LPCMINVOKECOMMANDINFO pici)
 {
     HRESULT hr = E_FAIL;
 
-    if (CSettings::GetEnabled() &&
+    if (CSettingsInstance().GetEnabled() &&
         (IS_INTRESOURCE(pici->lpVerb)) &&
         (LOWORD(pici->lpVerb) == 0))
     {
         Trace::Invoked();
-        InvokeStruct* pInvokeData = new InvokeStruct;
+        InvokeStruct* pInvokeData = new (std::nothrow) InvokeStruct;
         hr = pInvokeData ? S_OK : E_OUTOFMEMORY;
         if (SUCCEEDED(hr))
         {
@@ -144,8 +151,8 @@ HRESULT CPowerRenameMenu::InvokeCommand(_In_ LPCMINVOKECOMMANDINFO pici)
 DWORD WINAPI CPowerRenameMenu::s_PowerRenameUIThreadProc(_In_ void* pData)
 {
     InvokeStruct* pInvokeData = static_cast<InvokeStruct*>(pData);
-    CComPtr<IDataObject> spdo;
-    HRESULT hr = CoGetInterfaceAndReleaseStream(pInvokeData->pstrm, IID_PPV_ARGS(&spdo));
+    CComPtr<IUnknown> dataSource;
+    HRESULT hr = CoGetInterfaceAndReleaseStream(pInvokeData->pstrm, IID_PPV_ARGS(&dataSource));
     if (SUCCEEDED(hr))
     {
         // Create the rename manager
@@ -164,9 +171,16 @@ DWORD WINAPI CPowerRenameMenu::s_PowerRenameUIThreadProc(_In_ void* pData)
                 {
                     // Create the rename UI instance and pass the rename manager
                     CComPtr<IPowerRenameUI> spsrui;
-                    hr = CPowerRenameUI::s_CreateInstance(spsrm, spdo, false, &spsrui);
+                    hr = CPowerRenameUI::s_CreateInstance(spsrm, dataSource, false, &spsrui);
+
                     if (SUCCEEDED(hr))
                     {
+                        IDataObject* dummy;
+                        // If we're running on a local COM server, we need to decrement module refcount, which was previously incremented in CPowerRenameMenu::Invoke.
+                        if (SUCCEEDED(dataSource->QueryInterface(IID_IShellItemArray, reinterpret_cast<void**>(&dummy))))
+                        {
+                            ModuleRelease();
+                        }
                         // Call blocks until we are done
                         spsrui->Show(pInvokeData->hwndParent);
                         spsrui->Close();
@@ -184,4 +198,81 @@ DWORD WINAPI CPowerRenameMenu::s_PowerRenameUIThreadProc(_In_ void* pData)
     Trace::UIShownRet(hr);
 
     return 0;
+}
+
+HRESULT __stdcall CPowerRenameMenu::GetTitle(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszName)
+{
+    return SHStrDup(app_name.c_str(), ppszName);
+}
+
+HRESULT __stdcall CPowerRenameMenu::GetIcon(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszIcon)
+{
+    if (!CSettingsInstance().GetShowIconOnMenu())
+    {
+        *ppszIcon = nullptr;
+        return E_NOTIMPL;
+    }
+
+    std::wstring iconResourcePath = get_module_filename();
+    iconResourcePath += L",-";
+    iconResourcePath += std::to_wstring(IDI_RENAME);
+    return SHStrDup(iconResourcePath.c_str(), ppszIcon);
+}
+
+HRESULT __stdcall CPowerRenameMenu::GetToolTip(IShellItemArray* /*psiItemArray*/, LPWSTR* ppszInfotip)
+{
+    *ppszInfotip = nullptr;
+    return E_NOTIMPL;
+}
+
+HRESULT __stdcall CPowerRenameMenu::GetCanonicalName(GUID* pguidCommandName)
+{
+    *pguidCommandName = __uuidof(this);
+    return S_OK;
+}
+
+HRESULT __stdcall CPowerRenameMenu::GetState(IShellItemArray* psiItemArray, BOOL fOkToBeSlow, EXPCMDSTATE* pCmdState)
+{
+    *pCmdState = CSettingsInstance().GetEnabled() ? ECS_ENABLED : ECS_HIDDEN;
+    return S_OK;
+}
+
+//#define DEBUG_TELL_PID
+
+HRESULT __stdcall CPowerRenameMenu::Invoke(IShellItemArray* psiItemArray, IBindCtx* /*pbc*/)
+{
+#if defined(DEBUG_TELL_PID)
+    wchar_t buffer[256];
+    swprintf_s(buffer, L"%d", GetCurrentProcessId());
+    MessageBoxW(nullptr, buffer, L"PID", MB_OK);
+#endif
+    Trace::Invoked();
+    InvokeStruct* pInvokeData = new (std::nothrow) InvokeStruct;
+    HRESULT hr = pInvokeData ? S_OK : E_OUTOFMEMORY;
+    if (SUCCEEDED(hr))
+    {
+        pInvokeData->hwndParent = nullptr;
+        hr = CoMarshalInterThreadInterfaceInStream(__uuidof(psiItemArray), psiItemArray, &(pInvokeData->pstrm));
+        if (!SUCCEEDED(hr))
+        {
+            return E_FAIL;
+        }
+        // Prevent Shutting down before PowerRenameUI is created
+        ModuleAddRef();
+        hr = SHCreateThread(s_PowerRenameUIThreadProc, pInvokeData, CTF_COINIT | CTF_PROCESS_REF, nullptr) ? S_OK : E_FAIL;
+    }
+    Trace::InvokedRet(hr);
+    return S_OK;
+}
+
+HRESULT __stdcall CPowerRenameMenu::GetFlags(EXPCMDFLAGS* pFlags)
+{
+    *pFlags = ECF_DEFAULT;
+    return S_OK;
+}
+
+HRESULT __stdcall CPowerRenameMenu::EnumSubCommands(IEnumExplorerCommand** ppEnum)
+{
+    *ppEnum = nullptr;
+    return E_NOTIMPL;
 }

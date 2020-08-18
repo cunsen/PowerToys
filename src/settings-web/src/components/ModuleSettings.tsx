@@ -62,6 +62,7 @@ export class ModuleSettings extends React.Component <any, any> {
       <Stack tokens={{childrenGap:20}}>
         <Stack>
           <Text variant='large'>{this.state.powertoy.description}</Text>
+          { this.state.powertoy.hasOwnProperty('overview_link') || this.state.powertoy.hasOwnProperty('video_link') ? <br/> : null }
           {
             this.state.powertoy.hasOwnProperty('overview_link')
             ?
@@ -162,6 +163,10 @@ export class ModuleSettings extends React.Component <any, any> {
                   on_change={this.parent_on_change}
                   ref={(input) => {this.references[key]=input;}}
                 />;
+              case 'header_large':
+                return <Text 
+                  variant='large'
+                  className="SubHeader">{power_toys_properties[key].value}</Text>;
               default:
                 return null;
             }

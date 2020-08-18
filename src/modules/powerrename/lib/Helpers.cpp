@@ -1,93 +1,246 @@
-#include "stdafx.h"
+#include "pch.h"
 #include "Helpers.h"
+#include <regex>
 #include <ShlGuid.h>
+#include <cstring>
+#include <filesystem>
 
-HRESULT GetIconIndexFromPath(_In_ PCWSTR path, _Out_ int* index)
+namespace fs = std::filesystem;
+
+HRESULT GetTrimmedFileName(_Out_ PWSTR result, UINT cchMax, _In_ PCWSTR source)
 {
-    *index = 0;
-
-    HRESULT hr = E_FAIL;
-
-    SHFILEINFO shFileInfo = { 0 };
-
-    if (!PathIsRelative(path))
+    HRESULT hr = (source && wcslen(source) > 0) ? S_OK : E_INVALIDARG;
+    if (SUCCEEDED(hr))
     {
-        DWORD attrib = GetFileAttributes(path);
-        HIMAGELIST himl = (HIMAGELIST)SHGetFileInfo(path, attrib, &shFileInfo, sizeof(shFileInfo), (SHGFI_SYSICONINDEX | SHGFI_SMALLICON | SHGFI_USEFILEATTRIBUTES));
-        if (himl)
+        PWSTR newName = nullptr;
+        hr = SHStrDup(source, &newName);
+        if (SUCCEEDED(hr))
         {
-            *index = shFileInfo.iIcon;
-            // We shouldn't free the HIMAGELIST.
-            hr = S_OK;
+            size_t firstValidIndex = 0, lastValidIndex = wcslen(newName) - 1;
+            while (firstValidIndex <= lastValidIndex && iswspace(newName[firstValidIndex]))
+            {
+                firstValidIndex++;
+            }
+            while (firstValidIndex <= lastValidIndex && (iswspace(newName[lastValidIndex]) || newName[lastValidIndex] == L'.'))
+            {
+                lastValidIndex--;
+            }
+            newName[lastValidIndex + 1] = '\0';
+
+            hr = StringCchCopy(result, cchMax, newName + firstValidIndex);
+        }
+        CoTaskMemFree(newName);
+    }
+
+    return hr;
+}
+
+HRESULT GetTransformedFileName(_Out_ PWSTR result, UINT cchMax, _In_ PCWSTR source, DWORD flags)
+{
+    std::locale::global(std::locale(""));
+    HRESULT hr = (source && wcslen(source) > 0 && flags) ? S_OK : E_INVALIDARG;
+    if (SUCCEEDED(hr))
+    {
+        if (flags & Uppercase)
+        {
+            if (flags & NameOnly)
+            {
+                std::wstring stem = fs::path(source).stem().wstring();
+                std::transform(stem.begin(), stem.end(), stem.begin(), ::towupper);
+                hr = StringCchPrintf(result, cchMax, L"%s%s", stem.c_str(), fs::path(source).extension().c_str());
+            }
+            else if (flags & ExtensionOnly)
+            {
+                std::wstring extension = fs::path(source).extension().wstring();
+                if (!extension.empty())
+                {
+                    std::transform(extension.begin(), extension.end(), extension.begin(), ::towupper);
+                    hr = StringCchPrintf(result, cchMax, L"%s%s", fs::path(source).stem().c_str(), extension.c_str());
+                }
+                else
+                {
+                    hr = StringCchCopy(result, cchMax, source);
+                    if (SUCCEEDED(hr))
+                    {
+                        std::transform(result, result + wcslen(result), result, ::towupper);
+                    }
+                }
+            }
+            else
+            {
+                hr = StringCchCopy(result, cchMax, source);
+                if (SUCCEEDED(hr))
+                {
+                    std::transform(result, result + wcslen(result), result, ::towupper);
+                }
+            }
+        }
+        else if (flags & Lowercase)
+        {
+            if (flags & NameOnly)
+            {
+                std::wstring stem = fs::path(source).stem().wstring();
+                std::transform(stem.begin(), stem.end(), stem.begin(), ::towlower);
+                hr = StringCchPrintf(result, cchMax, L"%s%s", stem.c_str(), fs::path(source).extension().c_str());
+            }
+            else if (flags & ExtensionOnly)
+            {
+                std::wstring extension = fs::path(source).extension().wstring();
+                if (!extension.empty())
+                {
+                    std::transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+                    hr = StringCchPrintf(result, cchMax, L"%s%s", fs::path(source).stem().c_str(), extension.c_str());
+                }
+                else
+                {
+                    hr = StringCchCopy(result, cchMax, source);
+                    if (SUCCEEDED(hr))
+                    {
+                        std::transform(result, result + wcslen(result), result, ::towlower);
+                    }
+                }
+            }
+            else
+            {
+                hr = StringCchCopy(result, cchMax, source);
+                if (SUCCEEDED(hr))
+                {
+                    std::transform(result, result + wcslen(result), result, ::towlower);
+                }
+            }
+        }
+        else if (flags & Titlecase)
+        {
+            if (!(flags & ExtensionOnly))
+            {
+                std::vector<std::wstring> exceptions = { L"a", L"an", L"to", L"the", L"at", L"by", L"for", L"in", L"of", L"on", L"up", L"and", L"as", L"but", L"or", L"nor" };
+                std::wstring stem = fs::path(source).stem().wstring();
+                std::wstring extension = fs::path(source).extension().wstring();
+
+                size_t stemLength = stem.length();
+                bool isFirstWord = true;
+
+                while (stemLength > 0 && (iswspace(stem[stemLength - 1]) || iswpunct(stem[stemLength - 1])))
+                {
+                    stemLength--;
+                }
+
+                for (size_t i = 0; i < stemLength; i++)
+                {
+                    if (!i || iswspace(stem[i - 1]) || iswpunct(stem[i - 1]))
+                    {
+                        if (iswspace(stem[i]) || iswpunct(stem[i]))
+                        {
+                            continue;
+                        }
+                        size_t wordLength = 0;
+                        while (i + wordLength < stemLength && !iswspace(stem[i + wordLength]) && !iswpunct(stem[i + wordLength]))
+                        {
+                            wordLength++;
+                        }
+                        if (isFirstWord || i + wordLength == stemLength || std::find(exceptions.begin(), exceptions.end(), stem.substr(i, wordLength)) == exceptions.end())
+                        {
+                            stem[i] = towupper(stem[i]);
+                            isFirstWord = false;
+                        }
+                        else
+                        {
+                            stem[i] = towlower(stem[i]);
+                        }
+                    }
+                    else
+                    {
+                        stem[i] = towlower(stem[i]);
+                    }
+                }
+                hr = StringCchPrintf(result, cchMax, L"%s%s", stem.c_str(), extension.c_str());
+            }
+            else
+            {
+                hr = StringCchCopy(result, cchMax, source);
+            }
+        }
+        else
+        {
+            hr = StringCchCopy(result, cchMax, source);
         }
     }
 
     return hr;
 }
 
-HBITMAP CreateBitmapFromIcon(_In_ HICON hIcon, _In_opt_ UINT width, _In_opt_ UINT height)
+HRESULT GetDatedFileName(_Out_ PWSTR result, UINT cchMax, _In_ PCWSTR source, SYSTEMTIME LocalTime)
 {
-    HBITMAP hBitmapResult = NULL;
-
-    // Create compatible DC
-    HDC hDC = CreateCompatibleDC(NULL);
-    if (hDC != NULL)
+    HRESULT hr = (source && wcslen(source) > 0) ? S_OK : E_INVALIDARG;     
+    if (SUCCEEDED(hr))
     {
-        // Get bitmap rectangle size
-        RECT rc = { 0 };
-        rc.left = 0;
-        rc.right = (width != 0) ? width : GetSystemMetrics(SM_CXSMICON);
-        rc.top = 0;
-        rc.bottom = (height != 0) ? height : GetSystemMetrics(SM_CYSMICON);
+        std::wregex pattern(L"\\$YYYY");
+        std::wstring res(source);
+        wchar_t replaceTerm[MAX_PATH] = {0};
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%d"),LocalTime.wYear);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        // Create bitmap compatible with DC
-        BITMAPINFO BitmapInfo;
-        ZeroMemory(&BitmapInfo, sizeof(BITMAPINFO));
+        pattern = L"\\$SSS";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%03d"), LocalTime.wMilliseconds);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        BitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        BitmapInfo.bmiHeader.biWidth = rc.right;
-        BitmapInfo.bmiHeader.biHeight = rc.bottom;
-        BitmapInfo.bmiHeader.biPlanes = 1;
-        BitmapInfo.bmiHeader.biBitCount = 32;
-        BitmapInfo.bmiHeader.biCompression = BI_RGB;
+        pattern = L"\\$MMM";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%03d"), LocalTime.wMilliseconds);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        HDC hDCBitmap = GetDC(NULL);
+        pattern = L"\\$mmm";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%03d"), LocalTime.wMilliseconds);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        HBITMAP hBitmap = CreateDIBSection(hDCBitmap, &BitmapInfo, DIB_RGB_COLORS, NULL, NULL, 0);
+        pattern = L"\\$fff";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%03d"), LocalTime.wMilliseconds);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        ReleaseDC(NULL, hDCBitmap);
+        pattern = L"\\$FFF";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%03d"), LocalTime.wMilliseconds);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        if (hBitmap != NULL)
-        {
-            // Select bitmap into DC
-            HBITMAP hBitmapOld = (HBITMAP)SelectObject(hDC, hBitmap);
-            if (hBitmapOld != NULL)
-            {
-                // Draw icon into DC
-                if (DrawIconEx(hDC, 0, 0, hIcon, rc.right, rc.bottom, 0, NULL, DI_NORMAL))
-                {
-                    // Restore original bitmap in DC
-                    hBitmapResult = (HBITMAP)SelectObject(hDC, hBitmapOld);
-                    hBitmapOld = NULL;
-                    hBitmap = NULL;
-                }
+        pattern = L"\\$MM" ;
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%02d"), LocalTime.wMonth);
+        res = regex_replace(res, pattern, replaceTerm);
 
-                if (hBitmapOld != NULL)
-                {
-                    SelectObject(hDC, hBitmapOld);
-                }
-            }
+        pattern = L"\\$DD";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%02d"), LocalTime.wDay);
+        res = regex_replace(res, pattern, replaceTerm);
 
-            if (hBitmap != NULL)
-            {
-                DeleteObject(hBitmap);
-            }
-        }
+        pattern = L"\\$hh";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%02d"), LocalTime.wHour);
+        res = regex_replace(res, pattern, replaceTerm);
 
-        DeleteDC(hDC);
+        pattern = L"\\$mm";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%02d"), LocalTime.wMinute);
+        res = regex_replace(res, pattern, replaceTerm);
+
+        pattern = L"\\$ss";
+        StringCchPrintf(replaceTerm, MAX_PATH, TEXT("%02d"), LocalTime.wSecond);
+        res = regex_replace(res, pattern, replaceTerm);
+
+        hr = StringCchCopy(result, cchMax, res.c_str());
     }
 
-    return hBitmapResult;
+    return hr;
+}
+
+HRESULT _GetShellItemArrayFromDataOject(_In_ IUnknown* dataSource, _COM_Outptr_ IShellItemArray** items)
+{
+    *items = nullptr;
+    CComPtr<IDataObject> dataObj;
+    HRESULT hr;
+    if (SUCCEEDED(dataSource->QueryInterface(IID_PPV_ARGS(&dataObj))))
+    {
+        hr = SHCreateShellItemArrayFromDataObject(dataObj, IID_PPV_ARGS(items));
+    }
+    else
+    {
+        hr = dataSource->QueryInterface(IID_PPV_ARGS(items));
+    }
+
+    return hr;
 }
 
 HRESULT _ParseEnumItems(_In_ IEnumShellItems* pesi, _In_ IPowerRenameManager* psrm, _In_ int depth = 0)
@@ -140,11 +293,11 @@ HRESULT _ParseEnumItems(_In_ IEnumShellItems* pesi, _In_ IPowerRenameManager* ps
     return hr;
 }
 
-// Iterate through the data object and add paths to the rotation manager
-HRESULT EnumerateDataObject(_In_ IDataObject* pdo, _In_ IPowerRenameManager* psrm)
+// Iterate through the data source and add paths to the rotation manager
+HRESULT EnumerateDataObject(_In_ IUnknown* dataSource, _In_ IPowerRenameManager* psrm)
 {
     CComPtr<IShellItemArray> spsia;
-    HRESULT hr = SHCreateShellItemArrayFromDataObject(pdo, IID_PPV_ARGS(&spsia));
+    HRESULT hr = _GetShellItemArrayFromDataOject(dataSource, &spsia);
     if (SUCCEEDED(hr))
     {
         CComPtr<IEnumShellItems> spesi;
@@ -158,38 +311,7 @@ HRESULT EnumerateDataObject(_In_ IDataObject* pdo, _In_ IPowerRenameManager* psr
     return hr;
 }
 
-HWND CreateMsgWindow(_In_ HINSTANCE hInst, _In_ WNDPROC pfnWndProc, _In_ void* p)
-{
-    WNDCLASS wc = { 0 };
-    PWSTR wndClassName = L"MsgWindow";
-
-    wc.lpfnWndProc = DefWindowProc;
-    wc.cbWndExtra = sizeof(void*);
-    wc.hInstance = hInst;
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    wc.lpszClassName = wndClassName;
-
-    RegisterClass(&wc);
-
-    HWND hwnd = CreateWindowEx(
-        0, wndClassName, nullptr, 0,
-        0, 0, 0, 0, HWND_MESSAGE,
-        0, hInst, nullptr);
-    if (hwnd)
-    {
-        SetWindowLongPtr(hwnd, 0, (LONG_PTR)p);
-        if (pfnWndProc)
-        {
-            SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)pfnWndProc);
-        }
-    }
-
-    return hwnd;
-}
-
-BOOL GetEnumeratedFileName(__out_ecount(cchMax) PWSTR pszUniqueName, UINT cchMax,
-    __in PCWSTR pszTemplate, __in_opt PCWSTR pszDir, unsigned long ulMinLong,
-    __inout unsigned long* pulNumUsed)
+BOOL GetEnumeratedFileName(__out_ecount(cchMax) PWSTR pszUniqueName, UINT cchMax, __in PCWSTR pszTemplate, __in_opt PCWSTR pszDir, unsigned long ulMinLong, __inout unsigned long* pulNumUsed)
 {
     PWSTR pszName = nullptr;
     HRESULT hr = S_OK;
@@ -350,4 +472,32 @@ BOOL GetEnumeratedFileName(__out_ecount(cchMax) PWSTR pszUniqueName, UINT cchMax
     }
 
     return fRet;
+}
+
+// Iterate through the data source and checks if at least 1 item has SFGAO_CANRENAME.
+// We do not enumerate child items - only the items the user selected.
+bool DataObjectContainsRenamableItem(_In_ IUnknown* dataSource)
+{
+    bool hasRenamable = false;
+    CComPtr<IShellItemArray> spsia;
+    if (SUCCEEDED(_GetShellItemArrayFromDataOject(dataSource, &spsia)))
+    {
+        CComPtr<IEnumShellItems> spesi;
+        if (SUCCEEDED(spsia->EnumItems(&spesi)))
+        {
+            ULONG celtFetched;
+            CComPtr<IShellItem> spsi;
+            while ((S_OK == spesi->Next(1, &spsi, &celtFetched)))
+            {
+                SFGAOF attrs;
+                if (SUCCEEDED(spsi->GetAttributes(SFGAO_CANRENAME, &attrs)) &&
+                    attrs & SFGAO_CANRENAME)
+                {
+                    hasRenamable = true;
+                    break;
+                }
+            }
+        }
+    }
+    return hasRenamable;
 }

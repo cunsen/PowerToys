@@ -1,12 +1,10 @@
-#include "stdafx.h"
+#include "pch.h"
 #include "TestFileHelper.h"
 #include <iostream>
 #include <fstream>
 #include <Objbase.h>
 
 namespace fs = std::filesystem;
-
-
 
 CTestFileHelper::CTestFileHelper()
 {
@@ -70,4 +68,3 @@ void CTestFileHelper::_DeleteTempDirectory()
 {
     fs::remove_all(_tempDirectory);
 }
-

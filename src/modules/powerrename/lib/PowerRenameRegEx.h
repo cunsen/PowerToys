@@ -1,8 +1,10 @@
 #pragma once
-#include "stdafx.h"
+#include "pch.h"
 #include <vector>
 #include <string>
 #include "srwlock.h"
+
+#include "PowerRenameInterfaces.h"
 
 #define DEFAULT_FLAGS MatchAllOccurences
 

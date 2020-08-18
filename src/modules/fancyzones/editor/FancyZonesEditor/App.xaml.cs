@@ -1,12 +1,13 @@
-﻿using FancyZonesEditor;
+﻿// Copyright (c) Microsoft Corporation
+// The Microsoft Corporation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+
 using System;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Data;
-using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using FancyZonesEditor.Models;
+using ManagedCommon;
 
 namespace FancyZonesEditor
 {
@@ -15,51 +16,48 @@ namespace FancyZonesEditor
     /// </summary>
     public partial class App : Application
     {
-        public Settings ZoneSettings { get { return _settings; } }
-        private Settings _settings;
-        private ushort _idInitial = 0;
+        public Settings ZoneSettings { get; }
+
         public App()
         {
-            _settings = new Settings();
+            ZoneSettings = new Settings();
         }
 
         private void OnStartup(object sender, StartupEventArgs e)
         {
-            if (e.Args.Length > 1)
+            RunnerHelper.WaitForPowerToysRunner(Settings.PowerToysPID, () =>
             {
-                UInt16.TryParse(e.Args[1], out _idInitial);
-            }
+                Environment.Exit(0);
+            });
 
             LayoutModel foundModel = null;
 
-            if (_idInitial != 0)
+            foreach (LayoutModel model in ZoneSettings.DefaultModels)
             {
-                foreach (LayoutModel model in _settings.DefaultModels)
+                if (model.Type == Settings.ActiveZoneSetLayoutType)
                 {
-                    if (model.Id == _idInitial)
+                    // found match
+                    foundModel = model;
+                    break;
+                }
+            }
+
+            if (foundModel == null)
+            {
+                foreach (LayoutModel model in Settings.CustomModels)
+                {
+                    if ("{" + model.Guid.ToString().ToUpper() + "}" == Settings.ActiveZoneSetUUid.ToUpper())
                     {
                         // found match
                         foundModel = model;
                         break;
                     }
                 }
-
-                if (foundModel == null)
-                {
-                    foreach (LayoutModel model in _settings.CustomModels)
-                    {
-                        if (model.Id == _idInitial)
-                        {
-                            // found match
-                            foundModel = model;
-                            break;
-                        }
-                    }
-                }
             }
+
             if (foundModel == null)
             {
-                foundModel = _settings.DefaultModels[0];
+                foundModel = ZoneSettings.DefaultModels[0];
             }
 
             foundModel.IsSelected = true;

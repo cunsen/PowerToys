@@ -1,9 +1,11 @@
-#include "stdafx.h"
+#include "pch.h"
 #include "PowerRenameManager.h"
 #include "PowerRenameRegEx.h" // Default RegEx handler
 #include <algorithm>
 #include <shlobj.h>
+#include <cstring>
 #include "helpers.h"
+#include "window_helpers.h"
 #include <filesystem>
 #include "trace.h"
 
@@ -762,7 +764,6 @@ DWORD WINAPI CPowerRenameManager::s_regexWorkerThread(_In_ void* pv)
                                     StringCchCopy(sourceName, ARRAYSIZE(sourceName), originalName);
                                 }
 
-
                                 PWSTR newName = nullptr;
                                 // Failure here means we didn't match anything or had nothing to match
                                 // Call put_newName with null in that case to reset it
@@ -774,6 +775,13 @@ DWORD WINAPI CPowerRenameManager::s_regexWorkerThread(_In_ void* pv)
 
                                 // newName == nullptr likely means we have an empty search string.  We should leave newNameToUse
                                 // as nullptr so we clear the renamed column
+                                // Except string transformation is selected.
+                                
+                                if (newName == nullptr && (flags & Uppercase || flags & Lowercase || flags & Titlecase))
+                                {
+                                    SHStrDup(sourceName, &newName);
+                                }
+
                                 if (newName != nullptr)
                                 {
                                     newNameToUse = resultName;
@@ -799,6 +807,50 @@ DWORD WINAPI CPowerRenameManager::s_regexWorkerThread(_In_ void* pv)
                                     }
                                 }
                                 
+                                wchar_t trimmedName[MAX_PATH] = { 0 };
+                                if (newNameToUse != nullptr && SUCCEEDED(GetTrimmedFileName(trimmedName, ARRAYSIZE(trimmedName), newNameToUse)))
+                                {
+                                    newNameToUse = trimmedName;
+                                }
+                                
+                                bool isDateAttributeUsed = false;
+                                wchar_t datedName[MAX_PATH] = { 0 };
+                                std::wstring patterns[] = { L"$YYYY", L"$SSS", L"$MMM", L"$mmm", L"$FFF", L"$fff", 
+                                    L"$MM", L"$DD", L"$hh", L"$mm", L"$ss" };
+                                size_t patternsLength = ARRAYSIZE(patterns);
+                                SYSTEMTIME LocalTime;
+
+                                if (newNameToUse != nullptr)
+                                {
+                                    for (size_t i = 0; !isDateAttributeUsed && i < patternsLength; i++)
+                                    {
+                                        std::wstring source(newNameToUse);
+                                        if (source.find(patterns[i]) != std::string::npos)
+                                        {
+                                            isDateAttributeUsed = true;
+                                        }
+                                    }
+                                    if (isDateAttributeUsed)
+                                    {
+                                        if (SUCCEEDED(spItem->get_date(&LocalTime)))
+                                        {
+                                            if (SUCCEEDED(GetDatedFileName(datedName, ARRAYSIZE(datedName), newNameToUse, LocalTime)))
+                                            {
+                                                newNameToUse = datedName;
+                                            }
+                                        }
+                                    }
+                                }
+                                                                
+                                wchar_t transformedName[MAX_PATH] = { 0 };
+                                if (newNameToUse != nullptr && (flags & Uppercase || flags & Lowercase || flags & Titlecase))
+                                {
+                                    if (SUCCEEDED(GetTransformedFileName(transformedName, ARRAYSIZE(transformedName), newNameToUse, flags)))
+                                    {
+                                        newNameToUse = transformedName;
+                                    }
+                                }
+
                                 // No change from originalName so set newName to
                                 // null so we clear it from our UI as well.
                                 if (lstrcmp(originalName, newNameToUse) == 0)

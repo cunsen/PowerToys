@@ -1,4 +1,4 @@
-#include "stdafx.h"
+#include "pch.h"
 #include "PowerRenameRegEx.h"
 #include <regex>
 #include <string>
@@ -201,6 +201,9 @@ HRESULT CPowerRenameRegEx::Replace(_In_ PCWSTR source, _Outptr_ PWSTR* result)
             std::wstring searchTerm(m_searchTerm);
             std::wstring replaceTerm(m_replaceTerm ? wstring(m_replaceTerm) : wstring(L""));
 
+            replaceTerm = regex_replace(replaceTerm, std::wregex(L"(([^\\$]|^)(\\$\\$)*)\\$[0]"), L"$1$$$0");
+            replaceTerm = regex_replace(replaceTerm, std::wregex(L"(([^\\$]|^)(\\$\\$)*)\\$([1-9])"), L"$1$0$4");
+
             if (m_flags & UseRegularExpressions)
             {
                 std::wregex pattern(m_searchTerm, (!(m_flags & CaseSensitive)) ? regex_constants::icase | regex_constants::ECMAScript : regex_constants::ECMAScript);
@@ -210,11 +213,7 @@ HRESULT CPowerRenameRegEx::Replace(_In_ PCWSTR source, _Outptr_ PWSTR* result)
                 }
                 else
                 {
-                    std::wsmatch m;
-                    if (std::regex_search(sourceToUse, m, pattern))
-                    {
-                        res = sourceToUse.replace(m.prefix().length(), m.length(), replaceTerm);
-                    }
+                    res = regex_replace(wstring(source), pattern, replaceTerm, regex_constants::format_first_only);
                 }
             }
             else
@@ -237,8 +236,7 @@ HRESULT CPowerRenameRegEx::Replace(_In_ PCWSTR source, _Outptr_ PWSTR* result)
                 } while (pos != std::string::npos);
             }
 
-            *result = StrDup(res.c_str());
-            hr = (*result) ? S_OK : E_OUTOFMEMORY;
+            hr = SHStrDup(res.c_str(), result);
         }
         catch (regex_error e)
         {
